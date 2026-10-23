@@ -1,0 +1,12 @@
+# Chuẩn hoá line-ending: lưu LF trong repo
+* text=auto eol=lf
+
+# Nhị phân
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.xlsx binary
+*.db binary
+*.zip binary

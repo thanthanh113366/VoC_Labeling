@@ -1,0 +1,20 @@
+# ─── Môi trường ảo & cache ───────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# ─── CSDL phát sinh khi chạy (chứa nhãn của bạn) ─────────────
+web/data/
+*.db
+*.db-wal
+*.db-shm
+
+# ─── Bí mật ──────────────────────────────────────────────────
+.env
+.env.local
+
+# ─── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
