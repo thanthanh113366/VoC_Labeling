@@ -5,7 +5,6 @@ Chạy:  ./run.sh        (hoặc ../.venv/bin/python -m uvicorn app:app --port 8
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
 import os
@@ -18,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import auth
 import config as C
 from db import backend_name, connect
 from ingest import ensure_ready
@@ -41,15 +41,43 @@ EXPORT_COLUMNS = [
 ]
 
 # --------------------------------------------------------------------------
-# Đăng nhập đơn giản (bật khi có LABEL_PASSWORD)
+# Xác thực: mỗi người một tài khoản (A / B / hòa giải)
 # --------------------------------------------------------------------------
-LABEL_PASSWORD = (os.environ.get("LABEL_PASSWORD") or "").strip()
-AUTH_ON = bool(LABEL_PASSWORD)
-COOKIE_NAME = "voc_auth"
+AUTH_ON = auth.auth_enabled()
+COOKIE_NAME = "voc_session"
 
 
-def _auth_token() -> str:
-    return hashlib.sha256(("voc-labeling::" + LABEL_PASSWORD).encode()).hexdigest()
+def current_user(request: Request) -> dict | None:
+    """Đọc session cookie -> {"u": username, "a": annotator, "n": display}."""
+    return auth.read_token(request.cookies.get(COOKIE_NAME))
+
+
+def _resolve_annotator(request: Request, requested: str) -> str:
+    """Người A/B chỉ thao tác trên nhãn của chính mình; ADJ xem được cả hai."""
+    if not AUTH_ON:
+        return requested
+    user = current_user(request)
+    if not user:
+        return requested
+    if user["a"] == "ADJ":
+        return requested if requested in ("A", "B") else "A"
+    return user["a"]
+
+
+def _require_adjudicator(request: Request) -> None:
+    if not AUTH_ON:
+        return
+    user = current_user(request)
+    if not user or user["a"] != "ADJ":
+        raise HTTPException(403, "Chỉ tài khoản hòa giải được thực hiện")
+
+
+def _require_labeler(request: Request) -> None:
+    if not AUTH_ON:
+        return
+    user = current_user(request)
+    if not user or user["a"] not in ("A", "B"):
+        raise HTTPException(403, "Tài khoản hòa giải không gán nhãn")
 
 
 @app.middleware("http")
@@ -59,7 +87,7 @@ async def _require_login(request: Request, call_next):
     path = request.url.path
     if path == "/login" or path.startswith("/static") or path == "/api/health":
         return await call_next(request)
-    if request.cookies.get(COOKIE_NAME) == _auth_token():
+    if current_user(request):
         return await call_next(request)
     if path.startswith("/api/"):
         return JSONResponse({"detail": "Chưa đăng nhập"}, status_code=401)
@@ -77,16 +105,21 @@ background:#f6f7f9;display:flex;min-height:100vh;align-items:center;justify-cont
 box-shadow:0 6px 24px rgba(20,30,50,.06)}
 h1{font-size:16px;margin:0 0 6px}
 p{color:#6b7787;font-size:13px;margin:0 0 18px}
+label{display:block;font-size:11.5px;font-weight:600;color:#6b7787;text-transform:uppercase;
+letter-spacing:.4px;margin:12px 0 5px}
 input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e2e6ec;border-radius:8px;font-size:14px}
-button{width:100%;margin-top:12px;padding:10px;border:0;border-radius:8px;background:#2563eb;color:#fff;
+button{width:100%;margin-top:16px;padding:10px;border:0;border-radius:8px;background:#2563eb;color:#fff;
 font-size:14px;font-weight:600;cursor:pointer}
 .err{color:#b91c1c;font-size:13px;margin-top:12px;min-height:18px}
 </style></head>
 <body><form class="box" method="post" action="/login">
 <h1>Gán nhãn VoC</h1>
-<p>Nhập mật khẩu để tiếp tục</p>
-<input type="password" name="password" autofocus autocomplete="current-password" placeholder="Mật khẩu">
-<button type="submit">Vào</button>
+<p>Đăng nhập bằng tài khoản được cấp</p>
+<label for="u">Tài khoản</label>
+<input id="u" name="username" autofocus autocomplete="username" placeholder="ví dụ: a, b, adj">
+<label for="p">Mật khẩu</label>
+<input id="p" type="password" name="password" autocomplete="current-password" placeholder="Mật khẩu">
+<button type="submit">Đăng nhập</button>
 <div class="err">__ERROR__</div>
 </form></body></html>"""
 
@@ -95,22 +128,41 @@ font-size:14px;font-weight:600;cursor:pointer}
 def login_form(error: str = Query("")):
     if not AUTH_ON:
         return RedirectResponse("/", status_code=307)
-    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", "Sai mật khẩu, thử lại." if error else ""))
+    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", "Sai tài khoản hoặc mật khẩu." if error else ""))
 
 
 @app.post("/login", include_in_schema=False)
 async def login_submit(request: Request):
     if not AUTH_ON:
         return RedirectResponse("/", status_code=303)
-    # tự parse body để không cần thêm dependency python-multipart
+
+    # tự parse body để không cần dependency python-multipart
     body = (await request.body()).decode("utf-8", "ignore")
-    submitted = (parse_qs(body).get("password", [""])[0] or "").strip()
-    if submitted != LABEL_PASSWORD:
+    form = parse_qs(body)
+    username = (form.get("username", [""])[0] or "").strip()
+    password = form.get("password", [""])[0] or ""
+
+    conn = _conn()
+    try:
+        row = conn.execute(
+            """SELECT username, password_hash, annotator, display_name
+                 FROM users WHERE username = ?""",
+            (username,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row or not auth.verify_password(password, row["password_hash"]):
         return RedirectResponse("/login?error=1", status_code=303)
+
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie(
-        COOKIE_NAME, _auth_token(), max_age=12 * 3600, httponly=True,
-        samesite="lax", secure=request.url.scheme == "https",
+        COOKIE_NAME,
+        auth.make_token(row["username"], row["annotator"], row["display_name"] or row["username"]),
+        max_age=auth.SESSION_TTL,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
     )
     return resp
 
@@ -122,9 +174,19 @@ def logout():
     return resp
 
 
+@app.get("/api/me")
+def me(request: Request):
+    user = current_user(request)
+    if not user:
+        return {"authenticated": False, "username": None, "annotator": "A",
+                "display_name": None, "auth_required": AUTH_ON}
+    return {"authenticated": True, "username": user["u"], "annotator": user["a"],
+            "display_name": user["n"], "auth_required": AUTH_ON}
+
+
 @app.get("/api/health", include_in_schema=False)
 def health():
-    return {"ok": True, "backend": backend_name()}
+    return {"ok": True, "backend": backend_name(), "auth": AUTH_ON}
 
 
 def _now() -> str:
@@ -348,7 +410,8 @@ def meta():
 
 
 @app.get("/api/reviews")
-def list_reviews(annotator: str = Query("A")):
+def list_reviews(request: Request, annotator: str = Query("A")):
+    annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
         return _list_payload(conn, annotator)
@@ -368,7 +431,8 @@ def _review_payload(conn: sqlite3.Connection, review_id: str, annotator: str) ->
 
 
 @app.get("/api/reviews/{review_id}")
-def get_review(review_id: str, annotator: str = Query("A")):
+def get_review(review_id: str, request: Request, annotator: str = Query("A")):
+    annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
         return _review_payload(conn, review_id, annotator)
@@ -378,6 +442,8 @@ def get_review(review_id: str, annotator: str = Query("A")):
 
 @app.put("/api/reviews/{review_id}")
 async def save_review(review_id: str, request: Request, annotator: str = Query("A")):
+    _require_labeler(request)
+    annotator = _resolve_annotator(request, annotator)
     if annotator not in C.ANNOTATORS:
         raise HTTPException(400, "annotator phải là A hoặc B")
     payload = await request.json()
@@ -438,6 +504,7 @@ def adjudicate_get(review_id: str):
 @app.post("/api/adjudicate/{review_id}")
 async def adjudicate_post(review_id: str, request: Request,
                           adjudicator: str = Query("ADJ")):
+    _require_adjudicator(request)
     payload = await request.json()
     conn = _conn()
     try:
@@ -525,7 +592,8 @@ def _row_to_export(review_id: str, case_id: str, who: str, row: tuple) -> dict:
 
 
 @app.get("/api/export.csv")
-def export_csv(annotator: str = Query("A"), adjudicated: bool = Query(False)):
+def export_csv(request: Request, annotator: str = Query("A"), adjudicated: bool = Query(False)):
+    annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
         rows = _export_rows(conn, annotator, adjudicated=adjudicated)
@@ -547,7 +615,8 @@ def export_csv(annotator: str = Query("A"), adjudicated: bool = Query(False)):
 
 
 @app.get("/api/export.json")
-def export_json(annotator: str = Query("A"), adjudicated: bool = Query(False)):
+def export_json(request: Request, annotator: str = Query("A"), adjudicated: bool = Query(False)):
+    annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
         rows = _export_rows(conn, annotator, adjudicated=adjudicated)
@@ -560,18 +629,31 @@ def export_json(annotator: str = Query("A"), adjudicated: bool = Query(False)):
 # static
 # --------------------------------------------------------------------------
 @app.get("/")
-def index(open_id: str | None = Query(None, alias="open")):
+def index(request: Request, open_id: str | None = Query(None, alias="open")):
     """Nhúng sẵn meta + danh sách review vào HTML để trang vẽ ngay (không nhấp nháy)."""
     path = os.path.join(C.STATIC_DIR, "index.html")
     with open(path, encoding="utf-8") as fh:
         html = fh.read()
 
+    user = current_user(request)
+    annotator = _resolve_annotator(request, "A") if user else "A"
+
     conn = _conn()
     try:
-        boot = {"meta": _meta_payload(conn), "reviews": _list_payload(conn, "A")}
+        boot = {
+            "meta": _meta_payload(conn),
+            "reviews": _list_payload(conn, annotator),
+            "me": {
+                "authenticated": bool(user),
+                "username": user["u"] if user else None,
+                "annotator": annotator,
+                "display_name": user["n"] if user else None,
+                "auth_required": AUTH_ON,
+            },
+        }
         if open_id:
             try:
-                boot["current"] = _review_payload(conn, open_id, "A")
+                boot["current"] = _review_payload(conn, open_id, annotator)
             except HTTPException:
                 pass
     finally:

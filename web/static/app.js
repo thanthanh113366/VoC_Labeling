@@ -13,6 +13,7 @@ const S = {
   evidenceMode: null, // {ui, ii} đang chờ chọn bằng chứng
   tab: 'label',
   adjCurrent: null,
+  me: null,          // {username, annotator, display_name, auth_required}
 };
 
 /* ---------- utils ---------- */
@@ -116,6 +117,8 @@ async function boot() {
     // dữ liệu đã được server nhúng vào HTML -> vẽ ngay, không chờ fetch
     S.meta = B.meta;
     S.reviews = B.reviews || [];
+    S.me = B.me || null;
+    if (S.me && S.me.auth_required && S.me.annotator) S.annotator = S.me.annotator;
     $('sourceSub').textContent =
       `${S.meta.total_reviews} review · nguồn: ${S.meta.source_file}`;
     $('guideText').innerHTML = renderGuide(S.meta.guide);
@@ -128,7 +131,7 @@ async function boot() {
     updateProgress();
     if (S.current) renderEditor();
     applyAnnotatorUI();
-    if (S.annotator !== 'A') loadReviews().catch(() => {});
+    if (S.annotator !== ((B.me && B.me.annotator) || 'A')) loadReviews().catch(() => {});
     if (location.hash && !S.current) {
       openReview(decodeURIComponent(location.hash.slice(1))).catch(() => {});
     }
@@ -136,6 +139,8 @@ async function boot() {
   }
 
   S.meta = await api('/api/meta');
+  try { S.me = await api('/api/me'); } catch (e) { S.me = null; }
+  if (S.me && S.me.auth_required && S.me.annotator) S.annotator = S.me.annotator;
   $('sourceSub').textContent =
     `${S.meta.total_reviews} review · nguồn: ${S.meta.source_file}`;
   $('guideText').innerHTML = renderGuide(S.meta.guide);
@@ -587,9 +592,21 @@ async function saveDecision(rev, side) {
 
 /* ---------- annotator / tabs ---------- */
 function applyAnnotatorUI() {
+  const authOn = !!(S.me && S.me.auth_required);
   document.querySelectorAll('[data-ann]').forEach((b) => {
     b.classList.toggle('on', b.dataset.ann === S.annotator);
+    b.style.display = authOn ? 'none' : '';
   });
+  const chip = $('userChip');
+  if (chip) {
+    if (authOn && S.me) {
+      const role = S.me.annotator === 'ADJ' ? 'hòa giải' : ('người ' + S.me.annotator);
+      chip.textContent = (S.me.display_name || S.me.username) + ' · ' + role;
+      chip.style.display = '';
+    } else {
+      chip.style.display = 'none';
+    }
+  }
   document.querySelectorAll('[data-tab]').forEach((b) => {
     b.classList.toggle('on', b.dataset.tab === S.tab);
   });
@@ -601,6 +618,7 @@ function applyAnnotatorUI() {
 }
 
 async function switchAnnotator(a) {
+  if (S.me && S.me.auth_required) return;   // vai do tài khoản quyết định
   if (S.annotator === a) return;
   if (S.current) {
     const ok = confirm(`Chuyển sang Người ${a}? Nhãn chưa lưu của Người ${S.annotator} sẽ mất.`);

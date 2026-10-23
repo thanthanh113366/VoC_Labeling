@@ -9,6 +9,29 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LABELING_DIR = os.path.dirname(BASE_DIR)
 
+
+def _load_dotenv() -> None:
+    """Nạp .env (nếu có) vào os.environ. Không ghi đè biến đã được set."""
+    for path in (os.path.join(BASE_DIR, ".env"), os.path.join(LABELING_DIR, ".env")):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except OSError:
+            pass
+
+
+_load_dotenv()
+
 # File mẫu có thể nằm cạnh app.py (khi deploy Vercel, Root Directory = web)
 # hoặc ở gốc repo (khi chạy local) -> dò cả hai.
 _XLSX_CANDIDATES = [

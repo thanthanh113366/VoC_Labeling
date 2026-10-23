@@ -27,6 +27,30 @@ cd web && ../.venv/bin/python ingest.py
 
 ---
 
+## Tài khoản & phân quyền
+
+Mỗi người một tài khoản riêng. Tài khoản được **tạo tự động từ biến môi trường** ngay lần chạy đầu (và cập nhật khi bạn đổi mật khẩu).
+
+| Biến | Vai trò | Mặc định tên đăng nhập |
+|---|---|---|
+| `USER_A_PASSWORD` | gán nhãn, chỉ thấy nhãn của A | `a` (đổi bằng `USER_A_NAME`) |
+| `USER_B_PASSWORD` | gán nhãn, chỉ thấy nhãn của B | `b` (đổi bằng `USER_B_NAME`) |
+| `USER_ADJ_PASSWORD` | hòa giải, xem được cả A và B, **không** gán nhãn | `adj` (đổi bằng `USER_ADJ_NAME`) |
+| `LABEL_PASSWORD` | dự phòng: nếu không đặt 3 biến trên thì tạo 1 tài khoản `admin` | `admin` |
+
+**Phân quyền được ép ở server**, không phụ thuộc giao diện:
+
+- A/B gọi API với `?annotator=` khác cũng bị **ép về chính mình**.
+- Tài khoản hòa giải gán nhãn → `403`.
+- A/B gọi API hòa giải → `403`.
+- Mỗi người **không thấy** nhãn của người kia (kiểm tra độc lập).
+
+Mật khẩu lưu dạng PBKDF2-HMAC-SHA256 (120.000 vòng), session là cookie ký HMAC, hết hạn sau 12 giờ.
+
+Thêm người mới về sau: thêm 1 dòng trong bảng `users` (username, password_hash, annotator) là xong — không cần sửa code.
+
+---
+
 ## Giao diện
 
 **Danh sách 100 review, nhóm theo case:**
@@ -43,11 +67,11 @@ cd web && ../.venv/bin/python ingest.py
 
 | Vai | Cách dùng |
 |---|---|
-| **Người A** | Bấm "Người A" → gán 100 review → Xuất CSV |
-| **Người B** | Bấm "Người B" → gán **độc lập** (không thấy nhãn của A) |
-| **Hòa giải** | Tab "Hòa giải" → xem A và B song song → chọn A hoặc B |
+| **Người A** | Đăng nhập tài khoản `a` → gán 100 review → Xuất CSV |
+| **Người B** | Đăng nhập tài khoản `b` → gán **độc lập** (server không trả nhãn của A) |
+| **Hòa giải** | Đăng nhập tài khoản `adj` → tab "Hòa giải" → xem A và B song song → chọn A hoặc B |
 
-Vai được lưu trong `localStorage` của trình duyệt.
+Vai do **tài khoản** quyết định, không còn nút chọn A/B trên giao diện. Nút chọn A/B chỉ hiện khi chạy local **không** đặt mật khẩu.
 
 ---
 
@@ -114,10 +138,15 @@ turso db tokens create voc-labeling     # → TURSO_AUTH_TOKEN
 - Environment Variables:
 
 | Key | Giá trị |
-|---|---|
+|---|---|---|
 | `TURSO_DATABASE_URL` | `libsql://voc-labeling-xxx.turso.io` |
 | `TURSO_AUTH_TOKEN` | token vừa tạo |
-| `LABEL_PASSWORD` | mật khẩu truy cập (bỏ trống = không cần đăng nhập) |
+| `USER_A_PASSWORD` | mật khẩu người A |
+| `USER_B_PASSWORD` | mật khẩu người B |
+| `USER_ADJ_PASSWORD` | mật khẩu hòa giải |
+| `SESSION_SECRET` | *(tuỳ chọn)* chuỗi ngẫu nhiên để ký cookie |
+
+Bỏ trống hết các `USER_*_PASSWORD` thì app chạy không cần đăng nhập (chỉ nên dùng khi thử local).
 
 **3. Kiểm tra sau deploy**
 

@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    annotator     TEXT NOT NULL,
+    display_name  TEXT,
+    updated_at    TEXT
+);
 """
 
 
@@ -140,10 +148,69 @@ def ingest(conn: Connection, force: bool = False) -> int:
     return seq
 
 
+def seed_users(conn: Connection) -> int:
+    """Tạo/cập nhật tài khoản từ biến môi trường.
+
+    - USER_A_PASSWORD   -> tài khoản người A (annotator = A)
+    - USER_B_PASSWORD   -> tài khoản người B (annotator = B)
+    - USER_ADJ_PASSWORD -> tài khoản hòa giải (annotator = ADJ)
+    - LABEL_PASSWORD    -> nếu không có gì ở trên: một tài khoản admin (ADJ)
+
+    Tên đăng nhập đổi được bằng USER_A_NAME / USER_B_NAME / USER_ADJ_NAME.
+    Chỉ băm lại mật khẩu khi cấu hình thực sự thay đổi (so dấu vân tay),
+    nhờ vậy cold start không phải chạy PBKDF2 mỗi lần.
+    """
+    from auth import hash_password, password_fingerprint
+
+    a_pw = (os.environ.get("USER_A_PASSWORD") or "").strip()
+    b_pw = (os.environ.get("USER_B_PASSWORD") or "").strip()
+    adj_pw = (os.environ.get("USER_ADJ_PASSWORD") or "").strip()
+    legacy = (os.environ.get("LABEL_PASSWORD") or "").strip()
+
+    def name(key: str, default: str) -> str:
+        return (os.environ.get(key) or "").strip() or default
+
+    accounts: list[tuple[str, str, str, str]] = []
+    if a_pw:
+        accounts.append((name("USER_A_NAME", "a"), a_pw, "A", "Người A"))
+    if b_pw:
+        accounts.append((name("USER_B_NAME", "b"), b_pw, "B", "Người B"))
+    if adj_pw:
+        accounts.append((name("USER_ADJ_NAME", "adj"), adj_pw, "ADJ", "Hòa giải"))
+    if not accounts and legacy:
+        accounts.append((name("USER_ADMIN_NAME", "admin"), legacy, "ADJ", "Quản trị"))
+
+    if not accounts:
+        return 0
+
+    fp = password_fingerprint()
+    row = conn.execute("SELECT value FROM meta WHERE key = 'pw_fingerprint'").fetchone()
+    if row and row["value"] == fp:
+        return len(accounts)  # cấu hình không đổi -> khỏi băm lại
+
+    for username, password, annotator, display in accounts:
+        conn.execute(
+            """INSERT INTO users(username, password_hash, annotator, display_name, updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(username) DO UPDATE SET
+                 password_hash = excluded.password_hash,
+                 annotator     = excluded.annotator,
+                 display_name  = excluded.display_name,
+                 updated_at    = excluded.updated_at""",
+            (username, hash_password(password), annotator, display, _now()),
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('pw_fingerprint', ?)", (fp,)
+    )
+    conn.commit()
+    return len(accounts)
+
+
 def ensure_ready() -> None:
     conn = connect()
     try:
         ingest(conn)
+        seed_users(conn)
     finally:
         conn.close()
 
