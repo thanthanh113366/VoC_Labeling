@@ -1,0 +1,4 @@
+# Không cần đưa vào deployment
+screenshots/
+data/
+run.sh

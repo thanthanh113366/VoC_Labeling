@@ -5,19 +5,22 @@ Chạy:  ./run.sh        (hoặc ../.venv/bin/python -m uvicorn app:app --port 8
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import config as C
-from ingest import connect, ensure_ready
+from db import backend_name, connect
+from ingest import ensure_ready
 
 
 @asynccontextmanager
@@ -36,6 +39,92 @@ EXPORT_COLUMNS = [
     "evidence_text", "evidence_start", "evidence_end",
     "Can_thao_luan", "Ghi_chu",
 ]
+
+# --------------------------------------------------------------------------
+# Đăng nhập đơn giản (bật khi có LABEL_PASSWORD)
+# --------------------------------------------------------------------------
+LABEL_PASSWORD = (os.environ.get("LABEL_PASSWORD") or "").strip()
+AUTH_ON = bool(LABEL_PASSWORD)
+COOKIE_NAME = "voc_auth"
+
+
+def _auth_token() -> str:
+    return hashlib.sha256(("voc-labeling::" + LABEL_PASSWORD).encode()).hexdigest()
+
+
+@app.middleware("http")
+async def _require_login(request: Request, call_next):
+    if not AUTH_ON:
+        return await call_next(request)
+    path = request.url.path
+    if path == "/login" or path.startswith("/static") or path == "/api/health":
+        return await call_next(request)
+    if request.cookies.get(COOKIE_NAME) == _auth_token():
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Chưa đăng nhập"}, status_code=401)
+    return RedirectResponse("/login", status_code=307)
+
+
+_LOGIN_HTML = """<!doctype html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập — Gán nhãn VoC</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+background:#f6f7f9;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;color:#1c2430}
+.box{background:#fff;border:1px solid #e2e6ec;border-radius:14px;padding:28px 30px;width:340px;
+box-shadow:0 6px 24px rgba(20,30,50,.06)}
+h1{font-size:16px;margin:0 0 6px}
+p{color:#6b7787;font-size:13px;margin:0 0 18px}
+input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e2e6ec;border-radius:8px;font-size:14px}
+button{width:100%;margin-top:12px;padding:10px;border:0;border-radius:8px;background:#2563eb;color:#fff;
+font-size:14px;font-weight:600;cursor:pointer}
+.err{color:#b91c1c;font-size:13px;margin-top:12px;min-height:18px}
+</style></head>
+<body><form class="box" method="post" action="/login">
+<h1>Gán nhãn VoC</h1>
+<p>Nhập mật khẩu để tiếp tục</p>
+<input type="password" name="password" autofocus autocomplete="current-password" placeholder="Mật khẩu">
+<button type="submit">Vào</button>
+<div class="err">__ERROR__</div>
+</form></body></html>"""
+
+
+@app.get("/login", include_in_schema=False)
+def login_form(error: str = Query("")):
+    if not AUTH_ON:
+        return RedirectResponse("/", status_code=307)
+    return HTMLResponse(_LOGIN_HTML.replace("__ERROR__", "Sai mật khẩu, thử lại." if error else ""))
+
+
+@app.post("/login", include_in_schema=False)
+async def login_submit(request: Request):
+    if not AUTH_ON:
+        return RedirectResponse("/", status_code=303)
+    # tự parse body để không cần thêm dependency python-multipart
+    body = (await request.body()).decode("utf-8", "ignore")
+    submitted = (parse_qs(body).get("password", [""])[0] or "").strip()
+    if submitted != LABEL_PASSWORD:
+        return RedirectResponse("/login?error=1", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(
+        COOKIE_NAME, _auth_token(), max_age=12 * 3600, httponly=True,
+        samesite="lax", secure=request.url.scheme == "https",
+    )
+    return resp
+
+
+@app.get("/logout", include_in_schema=False)
+def logout():
+    resp = RedirectResponse("/login" if AUTH_ON else "/", status_code=303)
+    resp.delete_cookie(COOKIE_NAME)
+    return resp
+
+
+@app.get("/api/health", include_in_schema=False)
+def health():
+    return {"ok": True, "backend": backend_name()}
 
 
 def _now() -> str:
@@ -229,6 +318,8 @@ def _meta_payload(conn: sqlite3.Connection) -> dict:
         "annotators": C.ANNOTATORS,
         "guide": guide["value"] if guide else "",
         "source_file": src["value"] if src else "",
+        "auth_required": AUTH_ON,
+        "backend": backend_name(),
     }
 
 

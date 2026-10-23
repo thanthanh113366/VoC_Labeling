@@ -596,6 +596,8 @@ function applyAnnotatorUI() {
   $('tabLabel').style.display = S.tab === 'label' ? '' : 'none';
   $('tabAdj').style.display = S.tab === 'adj' ? '' : 'none';
   $('tabGuide').style.display = S.tab === 'guide' ? '' : 'none';
+  const lo = $('btnLogout');
+  if (lo) lo.style.display = (S.meta && S.meta.auth_required) ? '' : 'none';
 }
 
 async function switchAnnotator(a) {

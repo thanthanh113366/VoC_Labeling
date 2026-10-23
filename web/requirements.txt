@@ -1,0 +1,8 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Turso — chọn đúng gói theo scheme của TURSO_DATABASE_URL:
+#   libsql://...  -> libsql
+#   turso://...   -> turso-serverless
+libsql>=0.1.11
+turso-serverless>=0.1.0

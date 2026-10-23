@@ -8,7 +8,15 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LABELING_DIR = os.path.dirname(BASE_DIR)
-XLSX_PATH = os.path.join(LABELING_DIR, "Mau_thu_100_review_VoC.xlsx")
+
+# File mẫu có thể nằm cạnh app.py (khi deploy Vercel, Root Directory = web)
+# hoặc ở gốc repo (khi chạy local) -> dò cả hai.
+_XLSX_CANDIDATES = [
+    os.path.join(BASE_DIR, "Mau_thu_100_review_VoC.xlsx"),
+    os.path.join(LABELING_DIR, "Mau_thu_100_review_VoC.xlsx"),
+]
+XLSX_PATH = next((p for p in _XLSX_CANDIDATES if os.path.exists(p)), _XLSX_CANDIDATES[0])
+
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "labeling.db")
 STATIC_DIR = os.path.join(BASE_DIR, "static")

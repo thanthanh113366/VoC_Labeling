@@ -95,20 +95,59 @@ Nút **Xuất CSV** trên thanh công cụ tải trực tiếp.
 
 ---
 
+## Deploy lên Vercel + Turso
+
+Serverless không có đĩa bền, nên nhãn phải nằm ở DB ngoài (Turso). Không có `TURSO_DATABASE_URL` thì app tự dùng SQLite local (chế độ dev).
+
+**1. Tạo DB trên Turso**
+
+```bash
+turso db create voc-labeling
+turso db show voc-labeling --url        # → TURSO_DATABASE_URL
+turso db tokens create voc-labeling     # → TURSO_AUTH_TOKEN
+```
+
+**2. Cấu hình Vercel**
+
+- Import repo, đặt **Root Directory = `web`**
+- Framework Preset: **Other** (Vercel tự nhận FastAPI qua `app.py`)
+- Environment Variables:
+
+| Key | Giá trị |
+|---|---|
+| `TURSO_DATABASE_URL` | `libsql://voc-labeling-xxx.turso.io` |
+| `TURSO_AUTH_TOKEN` | token vừa tạo |
+| `LABEL_PASSWORD` | mật khẩu truy cập (bỏ trống = không cần đăng nhập) |
+
+**3. Kiểm tra sau deploy**
+
+```bash
+curl https://<project>.vercel.app/api/health
+# {"ok":true,"backend":"turso-libsql"}
+```
+
+Rồi vào web, đăng nhập, gán thử 1 review → **F5 tải lại** → nhãn còn là Turso đã hoạt động đúng.
+
+---
+
 ## Cấu trúc
 
 ```
 .
-├── Mau_thu_100_review_VoC.xlsx    # 4 sheet: HuongDan, Mau100, LyDoChon, GanNhan
 ├── docs/
 │   ├── codebook.md                # 8 lớp nhãn + 11 MOBI-Qual determinants + ví dụ mẫu
 │   └── plan.md                    # kế hoạch xây web, kiến trúc, lộ trình
 ├── sample_plan_390.csv            # đề xuất 390 mẫu cho bộ dữ liệu đầy đủ (3 mode)
-└── web/
-    ├── app.py                     # FastAPI: API + SSR bootstrap
-    ├── ingest.py                  # xlsx → SQLite
+├── requirements.txt               # -> -r web/requirements.txt
+└── web/                           # ← Root Directory khi deploy Vercel
+    ├── Mau_thu_100_review_VoC.xlsx  # 4 sheet: HuongDan, Mau100, LyDoChon, GanNhan
+    ├── app.py                     # FastAPI: API + SSR bootstrap + đăng nhập
+    ├── db.py                      # Turso (nếu có env) hoặc SQLite local
+    ├── ingest.py                  # xlsx → DB
     ├── xlsx_reader.py             # đọc xlsx bằng thư viện chuẩn
     ├── config.py                  # đường dẫn + danh mục nhãn
+    ├── requirements.txt
+    ├── vercel.json
     ├── run.sh
     ├── static/                    # index.html, app.js, style.css
     ├── screenshots/

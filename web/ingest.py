@@ -1,15 +1,17 @@
-"""Khởi tạo SQLite + nạp 100 review từ Mau_thu_100_review_VoC.xlsx.
+"""Khởi tạo CSDL + nạp 100 review từ Mau_thu_100_review_VoC.xlsx.
 
 Chạy trực tiếp:  python ingest.py
 Hoặc app.py sẽ tự gọi ensure_ready() khi khởi động.
+
+CSDL là Turso nếu có TURSO_DATABASE_URL, ngược lại là file SQLite local.
 """
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timezone
 
-from config import DATA_DIR, DB_PATH, SHEET_GUIDE, SHEET_REVIEWS, XLSX_PATH
+from config import DB_PATH, SHEET_GUIDE, SHEET_REVIEWS, XLSX_PATH
+from db import Connection, connect
 from xlsx_reader import read_workbook, rows_as_dicts
 
 SCHEMA = """
@@ -65,18 +67,11 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
-def connect() -> sqlite3.Connection:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def ingest(conn: sqlite3.Connection, force: bool = False) -> int:
+def ingest(conn: Connection, force: bool = False) -> int:
     """Nạp reviews + hướng dẫn. Trả về số review đã nạp."""
     conn.executescript(SCHEMA)
 
@@ -154,7 +149,8 @@ def ensure_ready() -> None:
 
 
 if __name__ == "__main__":
+    from db import backend_name
     c = connect()
     n = ingest(c, force=True)
     c.close()
-    print(f"Đã nạp {n} review vào {DB_PATH}")
+    print(f"Đã nạp {n} review — backend: {backend_name()}")
