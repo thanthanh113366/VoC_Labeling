@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import threading
 
 import config as C
 
@@ -72,11 +71,7 @@ class Connection:
         self._raw.commit()
 
     def close(self) -> None:
-        """Kết thúc một lượt dùng: rollback giao dịch dở dang, giữ raw để tái dùng theo thread."""
-        try:
-            self._raw.rollback()
-        except Exception:
-            pass
+        self._raw.close()
 
 
 def _connect_remote() -> Connection:
@@ -100,26 +95,14 @@ def _connect_remote() -> Connection:
     )
 
 
-_thread_local = threading.local()
-
-
-def _open() -> Connection:
-    """Mở một connection mới: Turso nếu có cấu hình, ngược lại SQLite local."""
+def connect() -> Connection:
+    """Trả về connection: Turso nếu có cấu hình, ngược lại SQLite local."""
     if IS_REMOTE:
         return _connect_remote()
     os.makedirs(C.DATA_DIR, exist_ok=True)  # Vercel chỉ cho ghi ở /tmp -> bỏ qua
     raw = sqlite3.connect(C.DB_PATH)
     raw.row_factory = sqlite3.Row
     return Connection(raw)
-
-
-def connect() -> Connection:
-    """Trả về connection tái dùng theo thread, tránh mở/handshake mỗi request."""
-    conn = getattr(_thread_local, "conn", None)
-    if conn is None:
-        conn = _open()
-        _thread_local.conn = conn
-    return conn
 
 
 def backend_name() -> str:
