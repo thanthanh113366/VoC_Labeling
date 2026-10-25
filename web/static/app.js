@@ -121,7 +121,6 @@ async function boot() {
     if (S.me && S.me.auth_required && S.me.annotator) S.annotator = S.me.annotator;
     $('sourceSub').textContent =
       `${S.meta.total_reviews} review · nguồn: ${S.meta.source_file}`;
-    $('guideText').innerHTML = renderGuide(S.meta.guide);
     if (B.current) {
       S.current = B.current;
       S.units = (B.current.units || []).map(normalizeUnit);
@@ -143,21 +142,8 @@ async function boot() {
   if (S.me && S.me.auth_required && S.me.annotator) S.annotator = S.me.annotator;
   $('sourceSub').textContent =
     `${S.meta.total_reviews} review · nguồn: ${S.meta.source_file}`;
-  $('guideText').innerHTML = renderGuide(S.meta.guide);
   await loadReviews();
   applyAnnotatorUI();
-}
-
-function renderGuide(txt) {
-  return String(txt || '')
-    .split('\n').filter(Boolean)
-    .map((line) => {
-      const i = line.indexOf('  —  ');
-      if (i > 0) {
-        return `<div style="margin:6px 0"><b>${esc(line.slice(0, i))}</b> — ${esc(line.slice(i + 5))}</div>`;
-      }
-      return `<div style="margin:6px 0">${esc(line)}</div>`;
-    }).join('');
 }
 
 async function loadReviews() {
@@ -370,7 +356,8 @@ function unitCardHtml(u, ui) {
         </label>
         <label class="fld">Cần thảo luận
           <select data-act="set" data-field="can_thao_luan" data-ui="${ui}">
-            ${opt([{key:'',label:'không'},{key:'yes',label:'yes'}], u.can_thao_luan, 'không')}
+            <option value=""${u.can_thao_luan === 'yes' ? '' : ' selected'}>no</option>
+            <option value="yes"${u.can_thao_luan === 'yes' ? ' selected' : ''}>yes</option>
           </select>
         </label>
         <label class="fld">Ghi chú

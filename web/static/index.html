@@ -71,18 +71,39 @@
 <!-- ================= TAB: GUIDE ================= -->
 <div class="main" id="tabGuide" style="display:none;max-width:900px">
   <div class="card">
-    <h2 style="margin-top:0;font-size:16px">Hướng dẫn gán nhãn (trích từ sheet HuongDan)</h2>
-    <div class="guide" id="guideText">đang tải…</div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
-    <h3 style="font-size:14px;margin:0 0 8px">Quy ước trong app</h3>
+    <h2 style="margin-top:0;font-size:16px">Hướng dẫn sử dụng</h2>
+
+    <h3 style="font-size:14px;margin:16px 0 8px">Gán nhãn một review</h3>
+    <ol class="hint" style="line-height:1.9;font-size:13px">
+      <li>Chọn một review ở cột trái.</li>
+      <li><b>Bôi đen</b> một đoạn trong khung review rồi bấm <b>+ Tạo unit</b> (hoặc <code>Ctrl+Enter</code>).</li>
+      <li>Chọn <b>Sentiment</b> và <b>Có vấn đề?</b>.</li>
+      <li>Nếu có vấn đề: thêm <b>Nhóm lỗi</b> (11 nhóm MOBI-Qual + other) và chọn <b>Severity</b>.</li>
+      <li>Bấm <b>Chọn bằng chứng</b> rồi bôi đen đoạn văn chứng minh.</li>
+      <li>Bấm <b>Lưu nhãn</b> (<code>Ctrl+S</code>).</li>
+    </ol>
+
+    <h3 style="font-size:14px;margin:16px 0 8px">Ba vai</h3>
+    <ul class="hint" style="line-height:1.9;font-size:13px">
+      <li><b>Người A / B</b>: đăng nhập tài khoản riêng, gán đủ 100 review rồi bấm <b>Xuất CSV</b> trên thanh công cụ.</li>
+      <li><b>Hòa giải</b>: mở tab <b>Hòa giải</b>, xem nhãn A và B song song rồi bấm “Dùng kết quả A” hoặc “Dùng kết quả B”.</li>
+    </ul>
+
+    <h3 style="font-size:14px;margin:16px 0 8px">Quy ước trong app</h3>
     <ul class="hint" style="line-height:1.9;font-size:13px">
       <li>Một <b>unit</b> = một chủ đề + một cảm xúc. Bôi đen đúng đoạn văn, không cần gõ lại.</li>
-      <li>Mỗi unit có thể có <b>nhiều issue</b> (unit–category), mỗi issue có severity + bằng chứng riêng.</li>
-      <li>Không chắc thì tích <b>Can_thao_luan</b>; severity có <code>not_applicable</code> / <code>uncertain</code>.</li>
+      <li>Mỗi unit có thể có <b>nhiều nhóm lỗi</b>; mỗi nhóm lỗi có severity + bằng chứng riêng.</li>
+      <li>Không chắc thì chọn <b>Cần thảo luận = yes</b>; severity có <code>not_applicable</code> / <code>uncertain</code>.</li>
       <li>Bằng chứng phải là đoạn <b>nguyên văn</b> trong review — app tự trích, không cho gõ tay.</li>
       <li>Hai người A/B làm <b>độc lập</b>; app không hiển thị nhãn của người kia khi đang gán.</li>
-      <li>Sheet <code>LyDoChon</code> (gợi ý từ khóa) <b>không</b> được nạp vào app để tránh thiên lệch.</li>
     </ul>
+
+    <h3 style="font-size:14px;margin:16px 0 8px">Phím tắt</h3>
+    <ul class="hint" style="line-height:1.9;font-size:13px">
+      <li><code>Ctrl+S</code> — lưu nhãn</li>
+      <li><code>Ctrl+Enter</code> — tạo unit từ đoạn đang bôi đen</li>
+    </ul>
+
     <div class="legend">
       <span><i style="background:#fff3bf;border:1px solid #e8c547"></i>unit</span>
       <span><i style="background:#d3f9d8;border:1px solid #2f9e44"></i>bằng chứng</span>
