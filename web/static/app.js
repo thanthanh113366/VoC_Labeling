@@ -593,6 +593,7 @@ async function saveDecision(rev, side) {
 /* ---------- annotator / tabs ---------- */
 function applyAnnotatorUI() {
   const authOn = !!(S.me && S.me.auth_required);
+  const canAdjudicate = !authOn || (S.me && S.me.annotator === 'ADJ');
   document.querySelectorAll('[data-ann]').forEach((b) => {
     b.classList.toggle('on', b.dataset.ann === S.annotator);
     b.style.display = authOn ? 'none' : '';
@@ -607,7 +608,9 @@ function applyAnnotatorUI() {
       chip.style.display = 'none';
     }
   }
+  if (!canAdjudicate && S.tab === 'adj') S.tab = 'label';
   document.querySelectorAll('[data-tab]').forEach((b) => {
+    if (b.dataset.tab === 'adj') b.style.display = canAdjudicate ? '' : 'none';
     b.classList.toggle('on', b.dataset.tab === S.tab);
   });
   $('tabLabel').style.display = S.tab === 'label' ? '' : 'none';

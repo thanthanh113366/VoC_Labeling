@@ -479,7 +479,8 @@ def stats():
 
 
 @app.get("/api/adjudicate/{review_id}")
-def adjudicate_get(review_id: str):
+def adjudicate_get(review_id: str, request: Request):
+    _require_adjudicator(request)
     conn = _conn()
     try:
         rev = dict(_review_row(conn, review_id))
@@ -593,6 +594,8 @@ def _row_to_export(review_id: str, case_id: str, who: str, row: tuple) -> dict:
 
 @app.get("/api/export.csv")
 def export_csv(request: Request, annotator: str = Query("A"), adjudicated: bool = Query(False)):
+    if adjudicated:
+        _require_adjudicator(request)
     annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
@@ -616,6 +619,8 @@ def export_csv(request: Request, annotator: str = Query("A"), adjudicated: bool 
 
 @app.get("/api/export.json")
 def export_json(request: Request, annotator: str = Query("A"), adjudicated: bool = Query(False)):
+    if adjudicated:
+        _require_adjudicator(request)
     annotator = _resolve_annotator(request, annotator)
     conn = _conn()
     try:
@@ -646,7 +651,7 @@ def index(request: Request, open_id: str | None = Query(None, alias="open")):
             "me": {
                 "authenticated": bool(user),
                 "username": user["u"] if user else None,
-                "annotator": annotator,
+                "annotator": user["a"] if user else annotator,
                 "display_name": user["n"] if user else None,
                 "auth_required": AUTH_ON,
             },
