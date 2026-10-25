@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -31,6 +32,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="VoC Labeling — Mau thu 100 review", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+_index_html: str | None = None
 
 EXPORT_COLUMNS = [
     "Review_ID", "Case_ID", "Nguoi_gan_nhan", "unit_id",
@@ -197,6 +201,15 @@ def _conn() -> sqlite3.Connection:
     return connect()
 
 
+def _load_index_html() -> str:
+    """Đọc index.html một lần rồi cache theo process."""
+    global _index_html
+    if _index_html is None:
+        with open(os.path.join(C.STATIC_DIR, "index.html"), encoding="utf-8") as fh:
+            _index_html = fh.read()
+    return _index_html
+
+
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
@@ -352,34 +365,43 @@ def _save_units(conn: sqlite3.Connection, annotator: str, review_id: str,
         "DELETE FROM annotations WHERE annotator = ? AND review_id = ?",
         (annotator, review_id),
     )
+    if not rows:
+        return
     ts = _now()
-    for r in rows:
-        conn.execute(
-            """INSERT INTO annotations
-               (annotator, review_id, case_id, unit_id, unit_text, unit_start, unit_end,
-                sentiment, issue_present, category, severity,
-                evidence_text, evidence_start, evidence_end,
-                can_thao_luan, ghi_chu, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (annotator, review_id, case_id) + r + (ts,),
-        )
+    cols = ("annotator, review_id, case_id, unit_id, unit_text, unit_start, unit_end, "
+            "sentiment, issue_present, category, severity, "
+            "evidence_text, evidence_start, evidence_end, "
+            "can_thao_luan, ghi_chu, updated_at")
+    # Ghi nhiều dòng trong một câu để giảm round trip (Turso). Chia batch để
+    # không vượt giới hạn số tham số của SQLite/libsql.
+    batch = 50
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        placeholders = ", ".join(["(" + ", ".join(["?"] * 17) + ")"] * len(chunk))
+        params: list = []
+        for r in chunk:
+            params.extend((annotator, review_id, case_id) + tuple(r) + (ts,))
+        conn.execute(f"INSERT INTO annotations ({cols}) VALUES {placeholders}", params)
 
 
 # --------------------------------------------------------------------------
 # API
 # --------------------------------------------------------------------------
 def _meta_payload(conn: sqlite3.Connection) -> dict:
-    total = conn.execute("SELECT COUNT(*) AS n FROM reviews").fetchone()["n"]
-    guide = conn.execute("SELECT value FROM meta WHERE key='guide'").fetchone()
-    src = conn.execute("SELECT value FROM meta WHERE key='source_file'").fetchone()
+    row = conn.execute("""
+        SELECT
+            (SELECT COUNT(*) FROM reviews) AS total,
+            (SELECT value FROM meta WHERE key = 'guide') AS guide,
+            (SELECT value FROM meta WHERE key = 'source_file') AS source_file
+    """).fetchone()
     return {
-        "total_reviews": total,
+        "total_reviews": row["total"],
         "categories": [{"key": k, "label": lbl} for k, lbl in C.CATEGORIES],
         "sentiments": C.SENTIMENTS,
         "severities": C.SEVERITIES,
         "annotators": C.ANNOTATORS,
-        "guide": guide["value"] if guide else "",
-        "source_file": src["value"] if src else "",
+        "guide": row["guide"] or "",
+        "source_file": row["source_file"] or "",
         "auth_required": AUTH_ON,
         "backend": backend_name(),
     }
@@ -401,12 +423,14 @@ def _list_payload(conn: sqlite3.Connection, annotator: str) -> list[dict]:
 
 
 @app.get("/api/meta")
-def meta():
+def meta(response: Response):
     conn = _conn()
     try:
-        return _meta_payload(conn)
+        payload = _meta_payload(conn)
     finally:
         conn.close()
+    response.headers["Cache-Control"] = "private, max-age=60"
+    return payload
 
 
 @app.get("/api/reviews")
@@ -544,36 +568,36 @@ def _export_rows(conn: sqlite3.Connection, annotator: str,
                                           r["adjudicator"] or "ADJ", row))
         return out
 
-    revs = conn.execute("""
-        SELECT r.review_id, r.case_id, r.text FROM reviews r
-         WHERE EXISTS (SELECT 1 FROM annotations a
-                        WHERE a.review_id=r.review_id AND a.annotator=?)
-         ORDER BY r.seq
+    rows = conn.execute("""
+        SELECT r.review_id, r.case_id,
+               a.unit_id, a.unit_text, a.unit_start, a.unit_end,
+               a.sentiment, a.issue_present, a.category, a.severity,
+               a.evidence_text, a.evidence_start, a.evidence_end,
+               a.can_thao_luan, a.ghi_chu
+          FROM reviews r
+          JOIN annotations a ON a.review_id = r.review_id
+         WHERE a.annotator = ?
+         ORDER BY r.seq, a.id
     """, (annotator,)).fetchall()
-    for r in revs:
-        ann = conn.execute(
-            "SELECT * FROM annotations WHERE annotator=? AND review_id=? ORDER BY id",
-            (annotator, r["review_id"]),
-        ).fetchall()
-        for a in ann:
-            out.append({
-                "Review_ID": r["review_id"],
-                "Case_ID": r["case_id"],
-                "Nguoi_gan_nhan": annotator,
-                "unit_id": a["unit_id"],
-                "unit_text_nguyen_van": a["unit_text"],
-                "unit_start": a["unit_start"],
-                "unit_end": a["unit_end"],
-                "sentiment": a["sentiment"],
-                "issue_present": a["issue_present"],
-                "category": a["category"],
-                "severity": a["severity"],
-                "evidence_text": a["evidence_text"],
-                "evidence_start": a["evidence_start"] if a["evidence_start"] is not None else "",
-                "evidence_end": a["evidence_end"] if a["evidence_end"] is not None else "",
-                "Can_thao_luan": a["can_thao_luan"],
-                "Ghi_chu": a["ghi_chu"],
-            })
+    for a in rows:
+        out.append({
+            "Review_ID": a["review_id"],
+            "Case_ID": a["case_id"],
+            "Nguoi_gan_nhan": annotator,
+            "unit_id": a["unit_id"],
+            "unit_text_nguyen_van": a["unit_text"],
+            "unit_start": a["unit_start"],
+            "unit_end": a["unit_end"],
+            "sentiment": a["sentiment"],
+            "issue_present": a["issue_present"],
+            "category": a["category"],
+            "severity": a["severity"],
+            "evidence_text": a["evidence_text"],
+            "evidence_start": a["evidence_start"] if a["evidence_start"] is not None else "",
+            "evidence_end": a["evidence_end"] if a["evidence_end"] is not None else "",
+            "Can_thao_luan": a["can_thao_luan"],
+            "Ghi_chu": a["ghi_chu"],
+        })
     return out
 
 
@@ -636,9 +660,7 @@ def export_json(request: Request, annotator: str = Query("A"), adjudicated: bool
 @app.get("/")
 def index(request: Request, open_id: str | None = Query(None, alias="open")):
     """Nhúng sẵn meta + danh sách review vào HTML để trang vẽ ngay (không nhấp nháy)."""
-    path = os.path.join(C.STATIC_DIR, "index.html")
-    with open(path, encoding="utf-8") as fh:
-        html = fh.read()
+    html = _load_index_html()
 
     user = current_user(request)
     annotator = _resolve_annotator(request, "A") if user else "A"

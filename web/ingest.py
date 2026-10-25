@@ -79,9 +79,30 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+SCHEMA_VERSION = "1"
+
+
+def _schema_ready(conn: Connection) -> bool:
+    """True nếu schema đã đúng phiên bản (tránh chạy lại schema mỗi cold start)."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        return bool(row) and row["value"] == SCHEMA_VERSION
+    except Exception:
+        # Bảng meta chưa tồn tại (lần chạy đầu) -> cần tạo schema
+        return False
+
+
 def ingest(conn: Connection, force: bool = False) -> int:
     """Nạp reviews + hướng dẫn. Trả về số review đã nạp."""
-    conn.executescript(SCHEMA)
+    if not _schema_ready(conn):
+        conn.executescript(SCHEMA)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        conn.commit()
 
     if not force:
         row = conn.execute("SELECT COUNT(*) AS n FROM reviews").fetchone()
